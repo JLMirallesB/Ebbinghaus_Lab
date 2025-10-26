@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ebbinghaus Lab - Simulador Interactivo</title>
+    <meta name="description" content="Laboratorio interactivo para experimentar con la curva del olvido de Ebbinghaus, práctica espaciada y efectos de memoria.">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/recharts@2.5.0/dist/Recharts.js"></script>
+    
+    <!-- Babel Standalone para JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+                'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+                sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        
+        /* Estilos para el slider */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 12px;
+            border-radius: 6px;
+            outline: none;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const { 
+            AreaChart, 
+            Area, 
+            XAxis, 
+            YAxis, 
+            CartesianGrid, 
+            Tooltip, 
+            ReferenceLine, 
+            ResponsiveContainer 
+        } = Recharts;
+
+        const EbbinghausSimulator = () => {
+            // Configuración del experimento
+            const [materialType, setMaterialType] = useState('sin-sentido');
+            const [practiceSessions, setPracticeSessions] = useState([]);
+            const [currentTime, setCurrentTime] = useState(0);
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [timeScale, setTimeScale] = useState('hours');
+            const [customPracticeInput, setCustomPracticeInput] = useState('');
+            const [customPracticeUnit, setCustomPracticeUnit] = useState('hours');
+            const [hoverRetention, setHoverRetention] = useState(null);
+            
+            // Material a memorizar
+            const sinSentidoMaterial = ['DAF', 'ZOF', 'MIL', 'KEP', 'TUG', 'VEX', 'JOR', 'NAZ', 'POL', 'BIF', 'QUA', 'WUM'];
+            const conSentidoMaterial = ['CASA', 'ÁRBOL', 'LIBRO', 'CIELO', 'AGUA', 'MÚSICA', 'JARDÍN', 'NOCHE', 'PIEDRA', 'VIENTO', 'PUERTA', 'TIEMPO'];
+            
+            const material = materialType === 'sin-sentido' ? sinSentidoMaterial : conSentidoMaterial;
+            const maxHours = 720;
+            
+            // Función para calcular la retención
+            const calculateRetention = (timeInHours, practicePoints) => {
+                const sortedPractices = [...practicePoints].sort((a, b) => a.hours - b.hours);
+                const practicesBeforeNow = sortedPractices.filter(p => p.hours <= timeInHours);
+                const numberOfPractices = practicesBeforeNow.length;
+                
+                let S = materialType === 'sin-sentido' ? 24 : 48;
+                
+                if (numberOfPractices === 0) {
+                    const R = Math.exp(-timeInHours / S);
+                    return Math.max(R, 0.05);
+                }
+                
+                let R = 1.0;
+                let lastPracticeTime = 0;
+                
+                for (let i = 0; i <= numberOfPractices; i++) {
+                    const practice = i < numberOfPractices ? practicesBeforeNow[i] : null;
+                    const currentTime = practice ? practice.hours : timeInHours;
+                    const timeSinceLastPractice = currentTime - lastPracticeTime;
+                    
+                    const consolidationMultiplier = Math.pow(2, i);
+                    const currentS = S * consolidationMultiplier;
+                    
+                    const segmentDecay = Math.exp(-timeSinceLastPractice / currentS);
+                    R *= segmentDecay;
+                    
+                    if (practice) {
+                        if (practice.type === 'complete') {
+                            R = 0.98;
+                        } else {
+                            const forgotten = 1 - R;
+                            const recoveryRate = R > 0.3 ? 0.6 : 0.4;
+                            R = Math.min(R + (forgotten * recoveryRate), 0.85);
+                        }
+                        lastPracticeTime = practice.hours;
+                    }
+                }
+                
+                return Math.max(R, 0.05);
+            };
+            
+            // Calcular retención individual con efectos de primacía y recencia
+            const calculateItemRetention = (itemIndex, baseRetention) => {
+                const totalItems = material.length;
+                const position = itemIndex / (totalItems - 1);
+                
+                const primacyBoost = Math.exp(-position * 3) * 0.15;
+                const recencyDecay = Math.exp(-currentTime / 12);
+                const recencyBoost = Math.exp(-(1 - position) * 3) * 0.15 * recencyDecay;
+                
+                let itemRetention = baseRetention + primacyBoost + recencyBoost;
+                const randomFactor = (Math.sin(itemIndex * 12.345) * 0.05);
+                itemRetention += randomFactor;
+                
+                return Math.max(Math.min(itemRetention, 1), 0);
+            };
+            
+            // Generar datos para la curva
+            const generateCurveData = () => {
+                const data = [];
+                let step;
+                
+                if (timeScale === 'hours') {
+                    step = 1;
+                } else if (timeScale === 'half-days') {
+                    step = 12;
+                } else {
+                    step = 24;
+                }
+                
+                for (let hour = 0; hour <= maxHours; hour += step) {
+                    const retention = calculateRetention(hour, practiceSessions);
+                    data.push({
+                        hour,
+                        hours: hour,
+                        halfDays: (hour / 12).toFixed(1),
+                        days: (hour / 24).toFixed(1),
+                        retention: retention * 100,
+                        retentionDecimal: retention
+                    });
+                }
+                
+                return data;
+            };
+            
+            const curveData = generateCurveData();
+            const currentRetention = calculateRetention(currentTime, practiceSessions);
+            
+            const getXAxisLabel = () => {
+                if (timeScale === 'hours') return 'Horas';
+                if (timeScale === 'half-days') return 'Medio días';
+                return 'Días';
+            };
+            
+            const getXAxisDataKey = () => {
+                if (timeScale === 'hours') return 'hours';
+                if (timeScale === 'half-days') return 'halfDays';
+                return 'days';
+            };
+            
+            // Funciones de práctica
+            const addPracticeSession = (hours, type = 'complete') => {
+                const exists = practiceSessions.find(p => p.hours === hours);
+                if (!exists && hours >= 0 && hours <= maxHours) {
+                    setPracticeSessions([...practiceSessions, { hours, type }].sort((a, b) => a.hours - b.hours));
+                }
+            };
+            
+            const removePracticeSession = (hours) => {
+                setPracticeSessions(practiceSessions.filter(p => p.hours !== hours));
+            };
+            
+            const togglePracticeType = (hours) => {
+                setPracticeSessions(
+                    practiceSessions.map(p => 
+                        p.hours === hours 
+                            ? { ...p, type: p.type === 'complete' ? 'superficial' : 'complete' }
+                            : p
+                    )
+                );
+            };
+            
+            const handleAddCustomPractice = (type = 'complete') => {
+                const value = parseFloat(customPracticeInput);
+                if (isNaN(value) || value < 0) return;
+                
+                let hours;
+                if (customPracticeUnit === 'hours') {
+                    hours = value;
+                } else if (customPracticeUnit === 'days') {
+                    hours = value * 24;
+                } else if (customPracticeUnit === 'weeks') {
+                    hours = value * 24 * 7;
+                }
+                
+                if (hours <= maxHours) {
+                    addPracticeSession(hours, type);
+                    setCustomPracticeInput('');
+                }
+            };
+            
+            const suggestedPractices = [
+                { hours: 1, label: '1h' },
+                { hours: 6, label: '6h' },
+                { hours: 12, label: '12h' },
+                { hours: 24, label: '1d' },
+                { hours: 48, label: '2d' },
+                { hours: 72, label: '3d' },
+                { hours: 168, label: '1sem' },
+                { hours: 336, label: '2sem' },
+                { hours: 504, label: '3sem' },
+            ];
+            
+            // Encontrar intersecciones
+            const findIntersections = (targetRetention) => {
+                if (!targetRetention) return [];
+                
+                const intersections = [];
+                const targetPercent = targetRetention;
+                
+                for (let i = 1; i < curveData.length; i++) {
+                    const prev = curveData[i - 1];
+                    const curr = curveData[i];
+                    
+                    const crossedDown = prev.retention >= targetPercent && curr.retention < targetPercent;
+                    const crossedUp = prev.retention <= targetPercent && curr.retention > targetPercent;
+                    
+                    if (crossedDown || crossedUp) {
+                        const t = (targetPercent - prev.retention) / (curr.retention - prev.retention);
+                        const exactHour = prev.hour + t * (curr.hour - prev.hour);
+                        
+                        intersections.push({
+                            hour: exactHour,
+                            retention: targetPercent
+                        });
+                    }
+                }
+                
+                return intersections;
+            };
+            
+            const intersections = findIntersections(hoverRetention);
+            
+            const formatTimeDisplay = (hours) => {
+                if (hours < 24) {
+                    return `${Math.round(hours)}h`;
+                } else if (hours < 168) {
+                    return `${(hours / 24).toFixed(1)}d`;
+                } else {
+                    return `${(hours / 168).toFixed(1)}sem`;
+                }
+            };
+            
+            const getIntersectionDistances = () => {
+                if (intersections.length < 2) return [];
+                
+                const distances = [];
+                for (let i = 1; i < intersections.length; i++) {
+                    const distance = intersections[i].hour - intersections[i - 1].hour;
+                    distances.push({
+                        from: intersections[i - 1].hour,
+                        to: intersections[i].hour,
+                        distance,
+                        label: formatTimeDisplay(distance)
+                    });
+                }
+                return distances;
+            };
+            
+            // Auto-play
+            useEffect(() => {
+                let interval;
+                if (isPlaying) {
+                    interval = setInterval(() => {
+                        setCurrentTime(prev => {
+                            if (prev >= maxHours) {
+                                setIsPlaying(false);
+                                return maxHours;
+                            }
+                            return prev + (timeScale === 'hours' ? 1 : timeScale === 'half-days' ? 12 : 24);
+                        });
+                    }, 50);
+                }
+                return () => clearInterval(interval);
+            }, [isPlaying, timeScale]);
+            
+            // Manejador de click en gráfica
+            const handleChartClick = (data) => {
+                if (data && data.activePayload && data.activePayload[0]) {
+                    const clickedHour = data.activePayload[0].payload.hour;
+                    setCurrentTime(clickedHour);
+                    setIsPlaying(false);
+                }
+            };
+            
+            // Items con opacidad
+            const itemsWithOpacity = material.map((item, index) => {
+                const itemRetention = calculateItemRetention(index, currentRetention);
+                return {
+                    item,
+                    retention: itemRetention,
+                    opacity: itemRetention,
+                    scale: 0.85 + (itemRetention * 0.15)
+                };
+            });
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-8">
+                    <div className="max-w-7xl mx-auto">
+                        {/* Header */}
+                        <div className="bg-white rounded-lg shadow-lg p-4 md:p-6 mb-6">
+                            <h1 className="text-3xl md:text-4xl font-bold text-slate-800 mb-2">
+                                Ebbinghaus Lab
+                            </h1>
+                            <p className="text-slate-600">
+                                Diseña experimentos y observa cómo funcionan la curva del olvido, la primacía y la recencia
+                            </p>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            {/* Panel de Configuración */}
+                            <div className="lg:col-span-1 space-y-6">
+                                {/* Tipo de Material */}
+                                <div className="bg-white rounded-lg shadow-lg p-4 md:p-6">
+                                    <h2 className="text-lg md:text-xl font-bold text-slate-800 mb-4 flex items-center">
+                                        <span className="bg-blue-500 text-white rounded-full w-8 h-8 flex items-center justify-center mr-3 text-sm">1</span>
+                                        Tipo de Material
+                                    </h2>
+                                    
+                                    <div className="space-y-3">
+                                        <button
+                                            onClick={() => setMaterialType('sin-sentido')}
+                                            className={`w-full p-3 md:p-4 rounded-lg border-2 transition-all ${
+                                                materialType === 'sin-sentido'
+                                                    ? 'border-blue-500 bg-blue-50'
+                                                    : 'border-slate-200 hover:border-slate-300'
+                                            }`}
+                                        >
+                                            <div className="font-semibold text-slate-800">Material sin sentido</div>
+                                            <div className="text-sm text-slate-600 mt-1">Sílabas CVC (DAF, ZOF...)</div>
+                                            <div className="text-xs text-slate-500 mt-2">Olvido más rápido</div>
+                                        </button>
+                                        
+                                        <button
+                                            onClick={() => setMaterialType('con-sentido')}
+                                            className={`w-full p-3 md:p-4 rounded-lg border-2 transition-all ${
+                                                materialType === 'con-sentido'
+                                                    ? 'border-green-500 bg-green-50'
+                                                    : 'border-slate-200 hover:border-slate-300'
+                                            }`}
+                                        >
+                                            <div className="font-semibold text-slate-800">Material con sentido</div>
+                                            <div className="text-sm text-slate-600 mt-1">Palabras significativas</div>
+                                            <div className="text-xs text-slate-500 mt-2">Mejor retención</div>
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                {/* Práctica Espaciada */}
+                                <div className="bg-white rounded-lg shadow-lg p-4 md:p-6">
+                                    <h2 className="text-lg md:text-xl font-bold text-slate-800 mb-4 flex items-center">
+                                        <span className="bg-purple-500 text-white rounded-full w-8 h-8 flex items-center justify-center mr-3 text-sm">2</span>
+                                        Práctica Espaciada
+                                    </h2>
+                                    
+                                    {/* Sesiones actuales */}
+                                    <div className="mb-4">
+                                        <div className="text-sm font-semibold text-slate-700 mb-2">
+                                            Sesiones programadas: {practiceSessions.length}
+                                        </div>
+                                        
+                                        {practiceSessions.length > 0 && (
+                                            <div className="space-y-2 mb-4 max-h-32 overflow-y-auto">
+                                                {practiceSessions.map(({ hours, type }) => (
+                                                    <div key={hours} className="flex items-center justify-between bg-purple-50 p-2 rounded group">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-sm text-slate-700 font-medium">
+                                                                {formatTimeDisplay(hours)}
+                                                            </span>
+                                                            <button
+                                                                onClick={() => togglePracticeType(hours)}
+                                                                className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                                                                    type === 'complete'
+                                                                        ? 'bg-green-500 text-white hover:bg-green-600'
+                                                                        : 'bg-orange-400 text-white hover:bg-orange-500'
+                                                                }`}
+                                                                title="Click para cambiar tipo"
+                                                            >
+                                                                {type === 'complete' ? '✓ Completo' : '~ Superficial'}
+                                                            </button>
+                                                        </div>
+                                                        <button
+                                                            onClick={() => removePracticeSession(hours)}
+                                                            className="text-red-500 hover:text-red-700 text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
+                                                        >
+                                                            ✕
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                    
+                                    {/* Prácticas sugeridas */}
+                                    <div className="text-sm font-semibold text-slate-700 mb-2">
+                                        Prácticas sugeridas:
+                                    </div>
+                                    <div className="text-xs text-slate-600 mb-2">
+                                        Click: Completo | Shift+Click: Superficial
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2 mb-4">
+                                        {suggestedPractices.map(({ hours, label }) => {
+                                            const existing = practiceSessions.find(p => p.hours === hours);
+                                            const isAdded = !!existing;
+                                            
+                                            return (
+                                                <button
+                                                    key={hours}
+                                                    onClick={(e) => {
+                                                        if (isAdded) {
+                                                            removePracticeSession(hours);
+                                                        } else {
+                                                            const type = e.shiftKey ? 'superficial' : 'complete';
+                                                            addPracticeSession(hours, type);
+                                                        }
+                                                    }}
+                                                    className={`p-2 rounded-lg text-xs font-medium transition-all relative ${
+                                                        isAdded
+                                                            ? existing.type === 'complete'
+                                                                ? 'bg-green-500 text-white'
+                                                                : 'bg-orange-400 text-white'
+                                                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                                    }`}
+                                                >
+                                                    {label}
+                                                    {isAdded && (
+                                                        <span className="absolute -top-1 -right-1 text-[8px]">
+                                                            {existing.type === 'complete' ? '✓' : '~'}
+                                                        </span>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    
+                                    {/* Práctica personalizada */}
+                                    <div className="border-t pt-4">
+                                        <div className="text-sm font-semibold text-slate-700 mb-2">
+                                            Práctica personalizada:
+                                        </div>
+                                        <div className="flex gap-2 mb-2">
+                                            <input
+                                                type="number"
+                                                value={customPracticeInput}
+                                                onChange={(e) => setCustomPracticeInput(e.target.value)}
+                                                onKeyPress={(e) => {
+                                                    if (e.key === 'Enter') handleAddCustomPractice('complete');
+                                                }}
+                                                placeholder="0"
+                                                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                                min="0"
+                                            />
+                                            <select
+                                                value={customPracticeUnit}
+                                                onChange={(e) => setCustomPracticeUnit(e.target.value)}
+                                                className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                            >
+                                                <option value="hours">horas</option>
+                                                <option value="days">días</option>
+                                                <option value="weeks">semanas</option>
+                                            </select>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => handleAddCustomPractice('complete')}
+                                                className="flex-1 px-3 py-2 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors"
+                                            >
+                                                ✓ Completo
+                                            </button>
+                                            <button
+                                                onClick={() => handleAddCustomPractice('superficial')}
+                                                className="flex-1 px-3 py-2 bg-orange-400 text-white rounded-lg text-xs font-medium hover:bg-orange-500 transition-colors"
+                                            >
+                                                ~ Superficial
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="mt-4 text-xs text-slate-500 bg-slate-50 p-3 rounded">
+                                        💡 <strong>Curva progresiva:</strong> Cada repaso hace que la siguiente curva sea menos pronunciada (consolidación)
+                                    </div>
+                                </div>
+                                
+                                {/* Estadísticas */}
+                                <div className="bg-white rounded-lg shadow-lg p-4 md:p-6">
+                                    <h2 className="text-lg md:text-xl font-bold text-slate-800 mb-4">
+                                        Estadísticas Actuales
+                                    </h2>
+                                    
+                                    <div className="space-y-3">
+                                        <div className="bg-slate-50 p-3 rounded">
+                                            <div className="text-xs text-slate-600 mb-1">Tiempo transcurrido</div>
+                                            <div className="text-2xl font-bold text-slate-800">
+                                                {formatTimeDisplay(currentTime)}
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="bg-slate-50 p-3 rounded">
+                                            <div className="text-xs text-slate-600 mb-1">Retención promedio</div>
+                                            <div className="text-2xl font-bold text-blue-600">
+                                                {(currentRetention * 100).toFixed(1)}%
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="bg-slate-50 p-3 rounded">
+                                            <div className="text-xs text-slate-600 mb-1">Repasos realizados</div>
+                                            <div className="text-2xl font-bold text-purple-600">
+                                                {practiceSessions.filter(p => p.hours <= currentTime).length}
+                                            </div>
+                                            <div className="text-[10px] text-slate-500 mt-1">
+                                                {practiceSessions.filter(p => p.hours <= currentTime && p.type === 'complete').length} completos
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* Visualización Principal */}
+                            <div className="lg:col-span-2 space-y-6">
+                                {/* Material Visualizado */}
+                                <div className="bg-white rounded-lg shadow-lg p-4 md:p-6">
+                                    <h2 className="text-lg md:text-xl font-bold text-slate-800 mb-2">
+                                        Material en Memoria
+                                    </h2>
+                                    <div className="text-sm text-slate-600 mb-3">
+                                        <strong>Efectos visibles:</strong> Primacía (inicio), Recencia (final), Valle central
+                                    </div>
+                                    
+                                    <div className="bg-slate-50 p-3 md:p-4 rounded-lg">
+                                        <div className="grid grid-cols-6 gap-2">
+                                            {itemsWithOpacity.map(({ item, retention, opacity, scale }, index) => {
+                                                const isFirst = index < 2;
+                                                const isLast = index >= material.length - 2;
+                                                const borderColor = isFirst ? 'border-green-400' : isLast ? 'border-blue-400' : 'border-slate-300';
+                                                
+                                                return (
+                                                    <div
+                                                        key={index}
+                                                        className={`aspect-square flex items-center justify-center rounded-lg font-bold text-xs md:text-sm transition-all duration-500 border-2 ${borderColor}`}
+                                                        style={{
+                                                            opacity,
+                                                            transform: `scale(${scale})`,
+                                                            backgroundColor: opacity > 0.5
+                                                                ? (materialType === 'sin-sentido' ? '#dbeafe' : '#dcfce7')
+                                                                : '#f1f5f9',
+                                                            color: opacity > 0.5
+                                                                ? (materialType === 'sin-sentido' ? '#1e40af' : '#15803d')
+                                                                : '#cbd5e1'
+                                                        }}
+                                                    >
+                                                        {item}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-600">
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="w-3 h-3 border-2 border-green-400 rounded"></div>
+                                            <span>Primacía</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="w-3 h-3 border-2 border-blue-400 rounded"></div>
+                                            <span>Recencia</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="w-3 h-3 border-2 border-slate-300 rounded"></div>
+                                            <span>Valle</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                {/* Gráfica */}
+                                <div className="bg-white rounded-lg shadow-lg p-4 md:p-6">
+                                    <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                                        <h2 className="text-lg md:text-xl font-bold text-slate-800">
+                                            Curva del Olvido de Ebbinghaus (30 días)
+                                        </h2>
+                                        
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => setTimeScale('hours')}
+                                                className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                                                    timeScale === 'hours'
+                                                        ? 'bg-blue-500 text-white'
+                                                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                                                }`}
+                                            >
+                                                Horas
+                                            </button>
+                                            <button
+                                                onClick={() => setTimeScale('half-days')}
+                                                className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                                                    timeScale === 'half-days'
+                                                        ? 'bg-blue-500 text-white'
+                                                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                                                }`}
+                                            >
+                                                12h
+                                            </button>
+                                            <button
+                                                onClick={() => setTimeScale('days')}
+                                                className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                                                    timeScale === 'days'
+                                                        ? 'bg-blue-500 text-white'
+                                                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                                                }`}
+                                            >
+                                                Días
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Gráfica con scroll */}
+                                    <div className="mb-4 overflow-x-auto">
+                                        <div style={{ minWidth: timeScale === 'hours' ? '3000px' : timeScale === 'half-days' ? '1500px' : '800px' }}>
+                                            <ResponsiveContainer width="100%" height={350}>
+                                                <AreaChart 
+                                                    data={curveData}
+                                                    onClick={handleChartClick}
+                                                    onMouseMove={(e) => {
+                                                        if (e && e.activePayload && e.activePayload[0]) {
+                                                            setHoverRetention(e.activePayload[0].payload.retention);
+                                                        }
+                                                    }}
+                                                    onMouseLeave={() => setHoverRetention(null)}
+                                                    style={{ cursor: 'pointer' }}
+                                                >
+                                                    <defs>
+                                                        <linearGradient id="colorRetention" x1="0" y1="0" x2="0" y2="1">
+                                                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                                                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                                                        </linearGradient>
+                                                    </defs>
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                                    <XAxis 
+                                                        dataKey={getXAxisDataKey()}
+                                                        label={{ value: getXAxisLabel(), position: 'insideBottom', offset: -5 }}
+                                                        stroke="#64748b"
+                                                        style={{ fontSize: '12px' }}
+                                                    />
+                                                    <YAxis 
+                                                        label={{ value: 'Retención (%)', angle: -90, position: 'insideLeft' }}
+                                                        stroke="#64748b"
+                                                        domain={[0, 100]}
+                                                        style={{ fontSize: '12px' }}
+                                                    />
+                                                    <Tooltip 
+                                                        formatter={(value) => `${value.toFixed(1)}%`}
+                                                        labelFormatter={(label) => `${getXAxisLabel()}: ${label}`}
+                                                    />
+                                                    <Area 
+                                                        type="monotone" 
+                                                        dataKey="retention" 
+                                                        stroke="#3b82f6" 
+                                                        strokeWidth={3}
+                                                        fill="url(#colorRetention)" 
+                                                    />
+                                                    
+                                                    {/* Línea horizontal de hover */}
+                                                    {hoverRetention && (
+                                                        <>
+                                                            <ReferenceLine 
+                                                                y={hoverRetention}
+                                                                stroke="#10b981" 
+                                                                strokeWidth={2}
+                                                                strokeDasharray="5 5"
+                                                                label={{ 
+                                                                    value: `${hoverRetention.toFixed(0)}%`, 
+                                                                    position: 'right',
+                                                                    fill: '#10b981',
+                                                                    fontWeight: 'bold',
+                                                                    fontSize: 12
+                                                                }}
+                                                            />
+                                                            {intersections.map((int, idx) => {
+                                                                const xValue = timeScale === 'hours' 
+                                                                    ? int.hour 
+                                                                    : timeScale === 'half-days' 
+                                                                        ? (int.hour / 12).toFixed(1) 
+                                                                        : (int.hour / 24).toFixed(1);
+                                                                
+                                                                return (
+                                                                    <ReferenceLine
+                                                                        key={`int-${idx}`}
+                                                                        x={xValue}
+                                                                        stroke="transparent"
+                                                                        label={{
+                                                                            value: '●',
+                                                                            position: 'top',
+                                                                            fill: '#10b981',
+                                                                            fontSize: 16,
+                                                                            offset: -5
+                                                                        }}
+                                                                    />
+                                                                );
+                                                            })}
+                                                        </>
+                                                    )}
+                                                    
+                                                    {/* Línea de tiempo actual */}
+                                                    <ReferenceLine 
+                                                        x={timeScale === 'hours' ? currentTime : timeScale === 'half-days' ? (currentTime / 12).toFixed(1) : (currentTime / 24).toFixed(1)}
+                                                        stroke="#ef4444" 
+                                                        strokeWidth={2}
+                                                        strokeDasharray="5 5"
+                                                        label={{ value: '▼', position: 'top', fill: '#ef4444', fontWeight: 'bold', fontSize: 16 }}
+                                                    />
+                                                    
+                                                    {/* Marcadores de práctica */}
+                                                    {practiceSessions.map(({ hours, type }) => (
+                                                        <ReferenceLine
+                                                            key={hours}
+                                                            x={timeScale === 'hours' ? hours : timeScale === 'half-days' ? (hours / 12).toFixed(1) : (hours / 24).toFixed(1)}
+                                                            stroke={type === 'complete' ? '#22c55e' : '#fb923c'}
+                                                            strokeWidth={3}
+                                                            strokeDasharray="3 3"
+                                                            label={{ 
+                                                                value: type === 'complete' ? '✓' : '~', 
+                                                                position: 'top',
+                                                                fontSize: 14,
+                                                                fill: type === 'complete' ? '#22c55e' : '#fb923c',
+                                                                fontWeight: 'bold'
+                                                            }}
+                                                        />
+                                                    ))}
+                                                </AreaChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Información de intersecciones */}
+                                    {intersections.length > 1 && (
+                                        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                            <div className="text-xs font-semibold text-green-800 mb-2">
+                                                📊 Análisis de consolidación en {hoverRetention.toFixed(0)}% de retención:
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {getIntersectionDistances().map((dist, idx) => (
+                                                    <div key={idx} className="text-xs text-green-700 bg-white px-2 py-1 rounded">
+                                                        <span className="font-semibold">Segmento {idx + 1}:</span> {dist.label}
+                                                        {idx > 0 && (
+                                                            <span className="ml-1 text-green-600">
+                                                                (+{((dist.distance / getIntersectionDistances()[0].distance - 1) * 100).toFixed(0)}%)
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="text-[10px] text-green-600 mt-2">
+                                                Cada segmento muestra cuánto tiempo tarda en alcanzar este nivel de olvido. Segmentos más largos = consolidación más fuerte.
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                    <div className="text-xs text-slate-500 mb-4 bg-blue-50 p-3 rounded space-y-1">
+                                        <div>💡 <strong>Click en la gráfica:</strong> Saltar a ese momento</div>
+                                        <div>🖱️ <strong>Hover en la gráfica:</strong> Ver línea horizontal con intersecciones y comparar tiempos de consolidación</div>
+                                        <div>✓ <strong>Verde:</strong> Repaso completo (recupera al 100%)</div>
+                                        <div>~ <strong>Naranja:</strong> Repaso superficial (recupera parcialmente)</div>
+                                    </div>
+                                    
+                                    {/* Control de Tiempo */}
+                                    <div className="space-y-3">
+                                        <div className="flex flex-wrap items-center gap-2 md:gap-4">
+                                            <button
+                                                onClick={() => setIsPlaying(!isPlaying)}
+                                                className="px-4 md:px-6 py-2 md:py-3 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition-colors text-sm md:text-base"
+                                            >
+                                                {isPlaying ? '⏸ Pausar' : '▶ Reproducir'}
+                                            </button>
+                                            
+                                            <button
+                                                onClick={() => setCurrentTime(0)}
+                                                className="px-4 md:px-6 py-2 md:py-3 bg-slate-200 text-slate-700 rounded-lg font-semibold hover:bg-slate-300 transition-colors text-sm md:text-base"
+                                            >
+                                                ⏮ Reiniciar
+                                            </button>
+                                            
+                                            <button
+                                                onClick={() => setCurrentTime(maxHours)}
+                                                className="px-4 md:px-6 py-2 md:py-3 bg-slate-200 text-slate-700 rounded-lg font-semibold hover:bg-slate-300 transition-colors text-sm md:text-base"
+                                            >
+                                                ⏭ Final
+                                            </button>
+                                        </div>
+                                        
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max={maxHours}
+                                            value={currentTime}
+                                            onChange={(e) => {
+                                                setCurrentTime(Number(e.target.value));
+                                                setIsPlaying(false);
+                                            }}
+                                            className="w-full h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                                            style={{
+                                                background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(currentTime / maxHours) * 100}%, #e2e8f0 ${(currentTime / maxHours) * 100}%, #e2e8f0 100%)`
+                                            }}
+                                        />
+                                        
+                                        <div className="flex justify-between text-xs text-slate-500">
+                                            <span>0h</span>
+                                            <span>1 sem</span>
+                                            <span>2 sem</span>
+                                            <span>3 sem</span>
+                                            <span>1 mes</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                {/* Información Educativa */}
+                                <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg shadow-lg p-4 md:p-6">
+                                    <h3 className="text-base md:text-lg font-bold text-slate-800 mb-3">
+                                        💡 Observaciones del Experimento
+                                    </h3>
+                                    
+                                    <div className="space-y-2 text-xs md:text-sm text-slate-700">
+                                        <p>
+                                            <strong>Material sin sentido:</strong> Se olvida más rápidamente (S=24h), como descubrió Ebbinghaus con sus sílabas CVC.
+                                        </p>
+                                        <p>
+                                            <strong>Material con sentido:</strong> Se retiene mejor (S=48h) porque el cerebro puede crear conexiones significativas.
+                                        </p>
+                                        <p>
+                                            <strong>Efecto de primacía:</strong> Los primeros elementos (borde verde) se recuerdan mejor que los del medio.
+                                        </p>
+                                        <p>
+                                            <strong>Efecto de recencia:</strong> Los últimos elementos (borde azul) se recuerdan mejor inicialmente, pero este efecto desaparece con el tiempo.
+                                        </p>
+                                        <p>
+                                            <strong>Repaso completo (✓):</strong> Recupera al ~100% de retención. Ideal cuando has estudiado bien pero quieres refrescar.
+                                        </p>
+                                        <p>
+                                            <strong>Repaso superficial (~):</strong> Recupera solo 40-60% de lo olvidado. Simula un repaso rápido sin profundizar.
+                                        </p>
+                                        <p>
+                                            <strong>Consolidación exponencial:</strong> Cada repaso multiplica la estabilidad (S) por 2×, haciendo la curva progresivamente más plana de forma exponencial.
+                                        </p>
+                                        <p>
+                                            <strong>Línea horizontal (hover):</strong> Muestra las intersecciones con la curva. Las distancias crecientes entre puntos demuestran la consolidación: tardas cada vez MÁS en olvidar hasta el mismo nivel.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* Footer */}
+                        <div className="mt-8 bg-white rounded-lg shadow-lg p-4 md:p-6">
+                            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                                <div className="text-sm text-slate-600">
+                                    Diseñado por{' '}
+                                    <a 
+                                        href="https://jlmirall.es" 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 hover:text-blue-800 font-semibold transition-colors"
+                                    >
+                                        José Luis Miralles Bono
+                                    </a>
+                                </div>
+                                
+                                <div className="flex items-center gap-3">
+                                    <span className="text-sm text-slate-600">Si te ha gustado, puedes invitarme a una</span>
+                                    <a
+                                        href="https://ko-fi.com/miralles"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-400 to-orange-500 hover:from-orange-500 hover:to-orange-600 text-white rounded-lg font-semibold transition-all transform hover:scale-105 shadow-md"
+                                    >
+                                        <span className="text-lg">🥤</span>
+                                        <span>horchata</span>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Renderizar la aplicación
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<EbbinghausSimulator />);
+    </script>
+</body>
+</html>
