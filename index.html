@@ -69,6 +69,11 @@
             const svgRef = useRef(null);
             const [tooltipData, setTooltipData] = useState(null);
 
+            // Validar datos
+            if (!data || data.length === 0) {
+                return <div style={{ width: '100%', height: 350, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>Cargando datos...</div>;
+            }
+
             // Dimensiones del gráfico
             const width = timeScale === 'hours' ? 3000 : timeScale === 'half-days' ? 1500 : 800;
             const height = 350;
@@ -77,9 +82,10 @@
             const chartHeight = height - margin.top - margin.bottom;
 
             // Escalas
-            const xMax = Math.max(...data.map(d => parseFloat(d[getXAxisDataKey()])));
-            const xScale = (value) => (value / xMax) * chartWidth;
-            const yScale = (value) => chartHeight - (value / 100) * chartHeight;
+            const xValues = data.map(d => parseFloat(d[getXAxisDataKey()] || 0));
+            const xMax = Math.max(...xValues, 1); // Evitar división por 0
+            const xScale = (value) => ((value || 0) / xMax) * chartWidth;
+            const yScale = (value) => chartHeight - ((value || 0) / 100) * chartHeight;
 
             // Crear path para el área
             const createAreaPath = () => {
@@ -260,7 +266,7 @@
                                     </text>
 
                                     {/* Puntos de intersección */}
-                                    {intersections.map((int, idx) => {
+                                    {intersections && intersections.map((int, idx) => {
                                         const xValue = timeScale === 'hours'
                                             ? int.hour
                                             : timeScale === 'half-days'
@@ -314,7 +320,7 @@
                             })()}
 
                             {/* Marcadores de práctica */}
-                            {practiceSessions.map(({ hours, type }) => {
+                            {practiceSessions && practiceSessions.map(({ hours, type }) => {
                                 const xValue = timeScale === 'hours'
                                     ? hours
                                     : timeScale === 'half-days'
