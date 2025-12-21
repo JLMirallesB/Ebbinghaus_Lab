@@ -13,20 +13,6 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-    <!-- Recharts dependencies -->
-    <script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3-scale@4.0.2/dist/d3-scale.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3-shape@3.2.0/dist/d3-shape.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3-interpolate@3.0.1/dist/d3-interpolate.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3-color@3.1.0/dist/d3-color.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3-format@3.1.0/dist/d3-format.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3-time-format@4.1.0/dist/d3-time-format.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3-time@3.1.0/dist/d3-time.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3-array@3.2.4/dist/d3-array.min.js"></script>
-
-    <!-- Recharts -->
-    <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/dist/Recharts.min.js"></script>
-
     <!-- Babel Standalone para JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
@@ -76,17 +62,395 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
-        const { 
-            AreaChart, 
-            Area, 
-            XAxis, 
-            YAxis, 
-            CartesianGrid, 
-            Tooltip, 
-            ReferenceLine, 
-            ResponsiveContainer 
-        } = Recharts;
+        const { useState, useEffect, useRef } = React;
+
+        // Componente SVG Chart personalizado
+        const CustomChart = ({ data, currentTime, practiceSessions, hoverRetention, intersections, timeScale, getXAxisLabel, getXAxisDataKey, onChartClick, onMouseMove, onMouseLeave }) => {
+            const svgRef = useRef(null);
+            const [tooltipData, setTooltipData] = useState(null);
+
+            // Dimensiones del gráfico
+            const width = timeScale === 'hours' ? 3000 : timeScale === 'half-days' ? 1500 : 800;
+            const height = 350;
+            const margin = { top: 20, right: 30, bottom: 50, left: 60 };
+            const chartWidth = width - margin.left - margin.right;
+            const chartHeight = height - margin.top - margin.bottom;
+
+            // Escalas
+            const xMax = Math.max(...data.map(d => parseFloat(d[getXAxisDataKey()])));
+            const xScale = (value) => (value / xMax) * chartWidth;
+            const yScale = (value) => chartHeight - (value / 100) * chartHeight;
+
+            // Crear path para el área
+            const createAreaPath = () => {
+                if (data.length === 0) return '';
+
+                let path = `M ${xScale(parseFloat(data[0][getXAxisDataKey()]))} ${yScale(data[0].retention)}`;
+
+                for (let i = 1; i < data.length; i++) {
+                    const x = xScale(parseFloat(data[i][getXAxisDataKey()]));
+                    const y = yScale(data[i].retention);
+                    path += ` L ${x} ${y}`;
+                }
+
+                // Cerrar el área
+                path += ` L ${xScale(parseFloat(data[data.length - 1][getXAxisDataKey()]))} ${chartHeight}`;
+                path += ` L ${xScale(parseFloat(data[0][getXAxisDataKey()]))} ${chartHeight}`;
+                path += ' Z';
+
+                return path;
+            };
+
+            // Crear path para la línea
+            const createLinePath = () => {
+                if (data.length === 0) return '';
+
+                let path = `M ${xScale(parseFloat(data[0][getXAxisDataKey()]))} ${yScale(data[0].retention)}`;
+
+                for (let i = 1; i < data.length; i++) {
+                    const x = xScale(parseFloat(data[i][getXAxisDataKey()]));
+                    const y = yScale(data[i].retention);
+                    path += ` L ${x} ${y}`;
+                }
+
+                return path;
+            };
+
+            // Generar ticks para ejes
+            const xTicks = [];
+            const numXTicks = 10;
+            for (let i = 0; i <= numXTicks; i++) {
+                xTicks.push((xMax / numXTicks) * i);
+            }
+
+            const yTicks = [0, 20, 40, 60, 80, 100];
+
+            // Manejar mouse move
+            const handleMouseMove = (e) => {
+                const svg = svgRef.current;
+                if (!svg) return;
+
+                const rect = svg.getBoundingClientRect();
+                const x = e.clientX - rect.left - margin.left;
+
+                if (x < 0 || x > chartWidth) {
+                    setTooltipData(null);
+                    onMouseLeave();
+                    return;
+                }
+
+                const dataX = (x / chartWidth) * xMax;
+                const closestPoint = data.reduce((prev, curr) => {
+                    const prevDiff = Math.abs(parseFloat(prev[getXAxisDataKey()]) - dataX);
+                    const currDiff = Math.abs(parseFloat(curr[getXAxisDataKey()]) - dataX);
+                    return currDiff < prevDiff ? curr : prev;
+                });
+
+                setTooltipData({
+                    x: e.clientX - rect.left,
+                    y: e.clientY - rect.top,
+                    data: closestPoint
+                });
+
+                onMouseMove(closestPoint);
+            };
+
+            const handleMouseLeave = () => {
+                setTooltipData(null);
+                onMouseLeave();
+            };
+
+            const handleClick = (e) => {
+                const svg = svgRef.current;
+                if (!svg) return;
+
+                const rect = svg.getBoundingClientRect();
+                const x = e.clientX - rect.left - margin.left;
+
+                if (x < 0 || x > chartWidth) return;
+
+                const dataX = (x / chartWidth) * xMax;
+                const closestPoint = data.reduce((prev, curr) => {
+                    const prevDiff = Math.abs(parseFloat(prev[getXAxisDataKey()]) - dataX);
+                    const currDiff = Math.abs(parseFloat(curr[getXAxisDataKey()]) - dataX);
+                    return currDiff < prevDiff ? curr : prev;
+                });
+
+                onChartClick(closestPoint);
+            };
+
+            return (
+                <div style={{ position: 'relative' }}>
+                    <svg
+                        ref={svgRef}
+                        width={width}
+                        height={height}
+                        onMouseMove={handleMouseMove}
+                        onMouseLeave={handleMouseLeave}
+                        onClick={handleClick}
+                        style={{ cursor: 'pointer' }}
+                    >
+                        <defs>
+                            <linearGradient id="colorRetention" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                            </linearGradient>
+                        </defs>
+
+                        <g transform={`translate(${margin.left}, ${margin.top})`}>
+                            {/* Grid */}
+                            {yTicks.map(tick => (
+                                <line
+                                    key={`grid-y-${tick}`}
+                                    x1={0}
+                                    y1={yScale(tick)}
+                                    x2={chartWidth}
+                                    y2={yScale(tick)}
+                                    stroke="#e2e8f0"
+                                    strokeDasharray="3 3"
+                                />
+                            ))}
+                            {xTicks.map(tick => (
+                                <line
+                                    key={`grid-x-${tick}`}
+                                    x1={xScale(tick)}
+                                    y1={0}
+                                    x2={xScale(tick)}
+                                    y2={chartHeight}
+                                    stroke="#e2e8f0"
+                                    strokeDasharray="3 3"
+                                />
+                            ))}
+
+                            {/* Área */}
+                            <path
+                                d={createAreaPath()}
+                                fill="url(#colorRetention)"
+                            />
+
+                            {/* Línea */}
+                            <path
+                                d={createLinePath()}
+                                fill="none"
+                                stroke="#3b82f6"
+                                strokeWidth={3}
+                            />
+
+                            {/* Línea horizontal de hover */}
+                            {hoverRetention && (
+                                <>
+                                    <line
+                                        x1={0}
+                                        y1={yScale(hoverRetention)}
+                                        x2={chartWidth}
+                                        y2={yScale(hoverRetention)}
+                                        stroke="#10b981"
+                                        strokeWidth={2}
+                                        strokeDasharray="5 5"
+                                    />
+                                    <text
+                                        x={chartWidth - 5}
+                                        y={yScale(hoverRetention) - 5}
+                                        fill="#10b981"
+                                        fontWeight="bold"
+                                        fontSize={12}
+                                        textAnchor="end"
+                                    >
+                                        {hoverRetention.toFixed(0)}%
+                                    </text>
+
+                                    {/* Puntos de intersección */}
+                                    {intersections.map((int, idx) => {
+                                        const xValue = timeScale === 'hours'
+                                            ? int.hour
+                                            : timeScale === 'half-days'
+                                                ? int.hour / 12
+                                                : int.hour / 24;
+
+                                        return (
+                                            <circle
+                                                key={`int-${idx}`}
+                                                cx={xScale(xValue)}
+                                                cy={yScale(int.retention)}
+                                                r={5}
+                                                fill="#10b981"
+                                            />
+                                        );
+                                    })}
+                                </>
+                            )}
+
+                            {/* Línea de tiempo actual */}
+                            {(() => {
+                                const xValue = timeScale === 'hours'
+                                    ? currentTime
+                                    : timeScale === 'half-days'
+                                        ? currentTime / 12
+                                        : currentTime / 24;
+
+                                return (
+                                    <>
+                                        <line
+                                            x1={xScale(xValue)}
+                                            y1={0}
+                                            x2={xScale(xValue)}
+                                            y2={chartHeight}
+                                            stroke="#ef4444"
+                                            strokeWidth={2}
+                                            strokeDasharray="5 5"
+                                        />
+                                        <text
+                                            x={xScale(xValue)}
+                                            y={-5}
+                                            fill="#ef4444"
+                                            fontWeight="bold"
+                                            fontSize={16}
+                                            textAnchor="middle"
+                                        >
+                                            ▼
+                                        </text>
+                                    </>
+                                );
+                            })()}
+
+                            {/* Marcadores de práctica */}
+                            {practiceSessions.map(({ hours, type }) => {
+                                const xValue = timeScale === 'hours'
+                                    ? hours
+                                    : timeScale === 'half-days'
+                                        ? hours / 12
+                                        : hours / 24;
+
+                                return (
+                                    <g key={hours}>
+                                        <line
+                                            x1={xScale(xValue)}
+                                            y1={0}
+                                            x2={xScale(xValue)}
+                                            y2={chartHeight}
+                                            stroke={type === 'complete' ? '#22c55e' : '#fb923c'}
+                                            strokeWidth={3}
+                                            strokeDasharray="3 3"
+                                        />
+                                        <text
+                                            x={xScale(xValue)}
+                                            y={-5}
+                                            fill={type === 'complete' ? '#22c55e' : '#fb923c'}
+                                            fontWeight="bold"
+                                            fontSize={14}
+                                            textAnchor="middle"
+                                        >
+                                            {type === 'complete' ? '✓' : '~'}
+                                        </text>
+                                    </g>
+                                );
+                            })}
+
+                            {/* Eje X */}
+                            <line
+                                x1={0}
+                                y1={chartHeight}
+                                x2={chartWidth}
+                                y2={chartHeight}
+                                stroke="#64748b"
+                                strokeWidth={1}
+                            />
+                            {xTicks.map(tick => (
+                                <g key={`x-tick-${tick}`}>
+                                    <line
+                                        x1={xScale(tick)}
+                                        y1={chartHeight}
+                                        x2={xScale(tick)}
+                                        y2={chartHeight + 6}
+                                        stroke="#64748b"
+                                    />
+                                    <text
+                                        x={xScale(tick)}
+                                        y={chartHeight + 20}
+                                        fill="#64748b"
+                                        fontSize={12}
+                                        textAnchor="middle"
+                                    >
+                                        {tick.toFixed(1)}
+                                    </text>
+                                </g>
+                            ))}
+                            <text
+                                x={chartWidth / 2}
+                                y={chartHeight + 40}
+                                fill="#64748b"
+                                fontSize={12}
+                                textAnchor="middle"
+                            >
+                                {getXAxisLabel()}
+                            </text>
+
+                            {/* Eje Y */}
+                            <line
+                                x1={0}
+                                y1={0}
+                                x2={0}
+                                y2={chartHeight}
+                                stroke="#64748b"
+                                strokeWidth={1}
+                            />
+                            {yTicks.map(tick => (
+                                <g key={`y-tick-${tick}`}>
+                                    <line
+                                        x1={-6}
+                                        y1={yScale(tick)}
+                                        x2={0}
+                                        y2={yScale(tick)}
+                                        stroke="#64748b"
+                                    />
+                                    <text
+                                        x={-10}
+                                        y={yScale(tick)}
+                                        fill="#64748b"
+                                        fontSize={12}
+                                        textAnchor="end"
+                                        dominantBaseline="middle"
+                                    >
+                                        {tick}
+                                    </text>
+                                </g>
+                            ))}
+                            <text
+                                x={-40}
+                                y={chartHeight / 2}
+                                fill="#64748b"
+                                fontSize={12}
+                                textAnchor="middle"
+                                transform={`rotate(-90, -40, ${chartHeight / 2})`}
+                            >
+                                Retención (%)
+                            </text>
+                        </g>
+                    </svg>
+
+                    {/* Tooltip */}
+                    {tooltipData && (
+                        <div
+                            style={{
+                                position: 'absolute',
+                                left: tooltipData.x + 10,
+                                top: tooltipData.y - 10,
+                                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                color: 'white',
+                                padding: '8px 12px',
+                                borderRadius: '4px',
+                                fontSize: '12px',
+                                pointerEvents: 'none',
+                                zIndex: 1000
+                            }}
+                        >
+                            <div>{getXAxisLabel()}: {tooltipData.data[getXAxisDataKey()]}</div>
+                            <div>{tooltipData.data.retention.toFixed(1)}%</div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
 
         const EbbinghausSimulator = () => {
             // Configuración del experimento
@@ -335,11 +699,22 @@
             
             // Manejador de click en gráfica
             const handleChartClick = (data) => {
-                if (data && data.activePayload && data.activePayload[0]) {
-                    const clickedHour = data.activePayload[0].payload.hour;
-                    setCurrentTime(clickedHour);
+                if (data && data.hour !== undefined) {
+                    setCurrentTime(data.hour);
                     setIsPlaying(false);
                 }
+            };
+
+            // Manejador de mouse move en gráfica
+            const handleChartMouseMove = (data) => {
+                if (data && data.retention !== undefined) {
+                    setHoverRetention(data.retention);
+                }
+            };
+
+            // Manejador de mouse leave en gráfica
+            const handleChartMouseLeave = () => {
+                setHoverRetention(null);
             };
             
             // Items con opacidad
@@ -673,120 +1048,19 @@
                                     
                                     {/* Gráfica con scroll */}
                                     <div className="mb-4 overflow-x-auto">
-                                        <div style={{ minWidth: timeScale === 'hours' ? '3000px' : timeScale === 'half-days' ? '1500px' : '800px' }}>
-                                            <ResponsiveContainer width="100%" height={350}>
-                                                <AreaChart 
-                                                    data={curveData}
-                                                    onClick={handleChartClick}
-                                                    onMouseMove={(e) => {
-                                                        if (e && e.activePayload && e.activePayload[0]) {
-                                                            setHoverRetention(e.activePayload[0].payload.retention);
-                                                        }
-                                                    }}
-                                                    onMouseLeave={() => setHoverRetention(null)}
-                                                    style={{ cursor: 'pointer' }}
-                                                >
-                                                    <defs>
-                                                        <linearGradient id="colorRetention" x1="0" y1="0" x2="0" y2="1">
-                                                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
-                                                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/>
-                                                        </linearGradient>
-                                                    </defs>
-                                                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                                    <XAxis 
-                                                        dataKey={getXAxisDataKey()}
-                                                        label={{ value: getXAxisLabel(), position: 'insideBottom', offset: -5 }}
-                                                        stroke="#64748b"
-                                                        style={{ fontSize: '12px' }}
-                                                    />
-                                                    <YAxis 
-                                                        label={{ value: 'Retención (%)', angle: -90, position: 'insideLeft' }}
-                                                        stroke="#64748b"
-                                                        domain={[0, 100]}
-                                                        style={{ fontSize: '12px' }}
-                                                    />
-                                                    <Tooltip 
-                                                        formatter={(value) => `${value.toFixed(1)}%`}
-                                                        labelFormatter={(label) => `${getXAxisLabel()}: ${label}`}
-                                                    />
-                                                    <Area 
-                                                        type="monotone" 
-                                                        dataKey="retention" 
-                                                        stroke="#3b82f6" 
-                                                        strokeWidth={3}
-                                                        fill="url(#colorRetention)" 
-                                                    />
-                                                    
-                                                    {/* Línea horizontal de hover */}
-                                                    {hoverRetention && (
-                                                        <>
-                                                            <ReferenceLine 
-                                                                y={hoverRetention}
-                                                                stroke="#10b981" 
-                                                                strokeWidth={2}
-                                                                strokeDasharray="5 5"
-                                                                label={{ 
-                                                                    value: `${hoverRetention.toFixed(0)}%`, 
-                                                                    position: 'right',
-                                                                    fill: '#10b981',
-                                                                    fontWeight: 'bold',
-                                                                    fontSize: 12
-                                                                }}
-                                                            />
-                                                            {intersections.map((int, idx) => {
-                                                                const xValue = timeScale === 'hours' 
-                                                                    ? int.hour 
-                                                                    : timeScale === 'half-days' 
-                                                                        ? (int.hour / 12).toFixed(1) 
-                                                                        : (int.hour / 24).toFixed(1);
-                                                                
-                                                                return (
-                                                                    <ReferenceLine
-                                                                        key={`int-${idx}`}
-                                                                        x={xValue}
-                                                                        stroke="transparent"
-                                                                        label={{
-                                                                            value: '●',
-                                                                            position: 'top',
-                                                                            fill: '#10b981',
-                                                                            fontSize: 16,
-                                                                            offset: -5
-                                                                        }}
-                                                                    />
-                                                                );
-                                                            })}
-                                                        </>
-                                                    )}
-                                                    
-                                                    {/* Línea de tiempo actual */}
-                                                    <ReferenceLine 
-                                                        x={timeScale === 'hours' ? currentTime : timeScale === 'half-days' ? (currentTime / 12).toFixed(1) : (currentTime / 24).toFixed(1)}
-                                                        stroke="#ef4444" 
-                                                        strokeWidth={2}
-                                                        strokeDasharray="5 5"
-                                                        label={{ value: '▼', position: 'top', fill: '#ef4444', fontWeight: 'bold', fontSize: 16 }}
-                                                    />
-                                                    
-                                                    {/* Marcadores de práctica */}
-                                                    {practiceSessions.map(({ hours, type }) => (
-                                                        <ReferenceLine
-                                                            key={hours}
-                                                            x={timeScale === 'hours' ? hours : timeScale === 'half-days' ? (hours / 12).toFixed(1) : (hours / 24).toFixed(1)}
-                                                            stroke={type === 'complete' ? '#22c55e' : '#fb923c'}
-                                                            strokeWidth={3}
-                                                            strokeDasharray="3 3"
-                                                            label={{ 
-                                                                value: type === 'complete' ? '✓' : '~', 
-                                                                position: 'top',
-                                                                fontSize: 14,
-                                                                fill: type === 'complete' ? '#22c55e' : '#fb923c',
-                                                                fontWeight: 'bold'
-                                                            }}
-                                                        />
-                                                    ))}
-                                                </AreaChart>
-                                            </ResponsiveContainer>
-                                        </div>
+                                        <CustomChart
+                                            data={curveData}
+                                            currentTime={currentTime}
+                                            practiceSessions={practiceSessions}
+                                            hoverRetention={hoverRetention}
+                                            intersections={intersections}
+                                            timeScale={timeScale}
+                                            getXAxisLabel={getXAxisLabel}
+                                            getXAxisDataKey={getXAxisDataKey}
+                                            onChartClick={handleChartClick}
+                                            onMouseMove={handleChartMouseMove}
+                                            onMouseLeave={handleChartMouseLeave}
+                                        />
                                     </div>
                                     
                                     {/* Información de intersecciones */}
