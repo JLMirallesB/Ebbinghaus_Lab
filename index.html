@@ -64,8 +64,11 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
+        console.log('Script cargado correctamente');
+
         // Componente SVG Chart personalizado
         const CustomChart = ({ data, currentTime, practiceSessions, hoverRetention, intersections, timeScale, getXAxisLabel, getXAxisDataKey, onChartClick, onMouseMove, onMouseLeave }) => {
+            console.log('CustomChart rendering', { dataLength: data?.length, timeScale });
             const svgRef = useRef(null);
             const [tooltipData, setTooltipData] = useState(null);
 
